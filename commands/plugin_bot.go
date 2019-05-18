@@ -11,7 +11,8 @@ import (
 	"github.com/jonas747/yagpdb/common"
 	"github.com/mediocregopher/radix"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,6 +21,7 @@ var (
 )
 
 var _ bot.BotInitHandler = (*Plugin)(nil)
+var _ bot.BotStopperHandler = (*Plugin)(nil)
 
 func (p *Plugin) BotInit() {
 	eventsystem.AddHandler(HandleGuildCreate, eventsystem.EventGuildCreate)
@@ -27,6 +29,33 @@ func (p *Plugin) BotInit() {
 
 	CommandSystem.State = bot.State
 }
+func (p *Plugin) StopBot(wg *sync.WaitGroup) {
+	atomic.StoreInt32(shuttingDown, 1)
+
+	startedWaiting := time.Now()
+	for {
+		runningcommandsLock.Lock()
+		n := len(runningCommands)
+		runningcommandsLock.Unlock()
+
+		if n < 1 {
+			wg.Done()
+			return
+		}
+
+		if time.Since(startedWaiting) > time.Second*60 {
+			// timeout
+			logger.Infof("[commands] timeout waiting for %d commands to finish running (d=%s)", n, time.Since(startedWaiting))
+			wg.Done()
+			return
+		}
+
+		logger.Infof("[commands] waiting for %d commands to finish running (d=%s)", n, time.Since(startedWaiting))
+		time.Sleep(time.Millisecond * 500)
+	}
+}
+
+var helpFormatter = &dcmd.StdHelpFormatter{}
 
 func YAGCommandMiddleware(inner dcmd.RunFunc) dcmd.RunFunc {
 	return func(data *dcmd.Data) (interface{}, error) {
@@ -74,11 +103,38 @@ func YAGCommandMiddleware(inner dcmd.RunFunc) dcmd.RunFunc {
 		data = data.WithContext(context.WithValue(data.Context(), CtxKeyCmdSettings, settings))
 
 		// Lock the command for execution
-		err = common.BlockingLockRedisKey(RKeyCommandLock(data.Msg.Author.ID, yc.Name), CommandExecTimeout*2, int((CommandExecTimeout + time.Second).Seconds()))
-		if err != nil {
-			return nil, errors.WithMessage(err, "Failed locking command")
+		if !BlockingAddRunningCommand(data.Msg.GuildID, data.Msg.ChannelID, data.Msg.Author.ID, yc, time.Second*60) {
+			if atomic.LoadInt32(shuttingDown) == 1 {
+				return yc.Name + ": Bot is shutting down or restarting, please try again in a couple seconds...", nil
+			}
+
+			return yc.Name + ": Gave up trying to run command after 60 seconds waiting for your previous instance of this command to finish", nil
 		}
-		defer common.UnlockRedisKey(RKeyCommandLock(data.Msg.Author.ID, yc.Name))
+
+		defer removeRunningCommand(data.Msg.GuildID, data.Msg.ChannelID, data.Msg.Author.ID, yc)
+
+		err = dcmd.ParseCmdArgs(data)
+		if err != nil {
+			if dcmd.IsUserError(err) {
+
+				args := helpFormatter.ArgDefs(data.Cmd, data)
+				switches := helpFormatter.Switches(data.Cmd.Command)
+
+				resp := ""
+				if args != "" {
+					resp += "```\n" + args + "\n```"
+				}
+				if switches != "" {
+					resp += "```\n" + switches + "\n```"
+				}
+
+				resp = resp + "\nInvalid arguments provided: " + err.Error()
+				yc.PostCommandExecuted(settings, data, resp, nil)
+				return nil, nil
+			}
+
+			return nil, err
+		}
 
 		innerResp, err := inner(data)
 
@@ -130,7 +186,7 @@ func handleMsgCreate(evt *eventsystem.EventData) {
 func (p *Plugin) Prefix(data *dcmd.Data) string {
 	prefix, err := GetCommandPrefix(data.GS.ID)
 	if err != nil {
-		log.WithError(err).Error("Failed retrieving commands prefix")
+		logger.WithError(err).Error("Failed retrieving commands prefix")
 	}
 
 	return prefix
@@ -161,11 +217,13 @@ func cmdFuncHelp(data *dcmd.Data) (interface{}, error) {
 
 	// Send the targetted help in the channel it was requested in
 	resp = dcmd.GenerateTargettedHelp(target, data, data.ContainerChain[0], &dcmd.StdHelpFormatter{})
-	if len(resp) < 1 {
-		return CmdNotFound(target), nil
-	}
 
-	if len(resp) == 1 {
+	if target != "" {
+		if len(resp) != 1 {
+			// Send command not found in same channel
+			return CmdNotFound(target), nil
+		}
+
 		// Send short help in same channel
 		return resp, nil
 	}
@@ -192,7 +250,7 @@ func HandleGuildCreate(evt *eventsystem.EventData) {
 	var prefixExists bool
 	err := common.RedisPool.Do(radix.Cmd(&prefixExists, "EXISTS", "command_prefix:"+discordgo.StrID(g.ID)))
 	if err != nil {
-		log.WithError(err).Error("Failed checking if prefix exists")
+		logger.WithError(err).Error("Failed checking if prefix exists")
 		return
 	}
 
@@ -203,7 +261,7 @@ func HandleGuildCreate(evt *eventsystem.EventData) {
 		}
 
 		common.RedisPool.Do(radix.Cmd(nil, "SET", "command_prefix:"+discordgo.StrID(g.ID), defaultPrefix))
-		log.WithField("guild", g.ID).WithField("g_name", g.Name).Info("Set command prefix to default (" + defaultPrefix + ")")
+		logger.WithField("guild", g.ID).WithField("g_name", g.Name).Info("Set command prefix to default (" + defaultPrefix + ")")
 	}
 }
 

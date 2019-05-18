@@ -9,7 +9,6 @@ import (
 	"github.com/jonas747/yagpdb/commands"
 	"github.com/jonas747/yagpdb/common"
 	"github.com/jonas747/yagpdb/reputation/models"
-	"github.com/sirupsen/logrus"
 	"github.com/volatiletech/sqlboiler/queries/qm"
 	"regexp"
 	"strconv"
@@ -27,7 +26,7 @@ func (p *Plugin) BotInit() {
 	eventsystem.AddHandler(handleMessageCreate, eventsystem.EventMessageCreate)
 }
 
-var thanksRegex = regexp.MustCompile(`(?i)( |\n|^)(thanks?|danks|ty|thx|\+rep|\+ ?\<\@[0-9]*\>)( |\n|$)`)
+var thanksRegex = regexp.MustCompile(`(?i)( |\n|^)(thanks?\pP*|danks|ty|thx|\+rep|\+ ?\<\@[0-9]*\>)( |\n|$)`)
 
 func handleMessageCreate(evt *eventsystem.EventData) {
 	msg := evt.MessageCreate()
@@ -57,7 +56,7 @@ func handleMessageCreate(evt *eventsystem.EventData) {
 			err = err2
 		}
 
-		logrus.WithError(err).Error("Failed retrieving bot member")
+		logger.WithError(err).Error("Failed retrieving bot member")
 		return
 	}
 
@@ -71,7 +70,7 @@ func handleMessageCreate(evt *eventsystem.EventData) {
 			// Ignore this error silently
 			return
 		}
-		logrus.WithError(err).Error("Failed giving rep")
+		logger.WithError(err).Error("Failed giving rep")
 		return
 	}
 
@@ -123,8 +122,8 @@ var cmds = []*commands.YAGCommand{
 				return "An error occured while finding the server config", err
 			}
 
-			member, _ := bot.GetMember(parsed.GS.ID, parsed.Msg.Author.ID)
-			if member == nil || !IsAdmin(parsed.GS, member, conf) {
+			member := commands.ContextMS(parsed.Context())
+			if !IsAdmin(parsed.GS, member, conf) {
 				return "You're not an reputation admin. (no manage servers perms and no rep admin role)", nil
 			}
 

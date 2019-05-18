@@ -6,7 +6,6 @@ import (
 
 type CoreConfig struct {
 	Owner int64
-	BotID int64
 
 	ClientID     string
 	ClientSecret string
@@ -17,6 +16,7 @@ type CoreConfig struct {
 	PQHost     string
 	PQUsername string
 	PQPassword string
+	PQDB       string
 	Redis      string
 
 	DogStatsdAddress string

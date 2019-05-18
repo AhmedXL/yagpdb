@@ -46,6 +46,8 @@ import (
 	"github.com/jonas747/yagpdb/soundboard"
 	"github.com/jonas747/yagpdb/stdcommands"
 	"github.com/jonas747/yagpdb/streaming"
+	"github.com/jonas747/yagpdb/tickets"
+	"github.com/jonas747/yagpdb/verification"
 	"github.com/jonas747/yagpdb/youtube"
 )
 
@@ -69,7 +71,7 @@ func init() {
 	flag.BoolVar(&flagRunBot, "bot", false, "Set to run discord bot and bot related stuff")
 	flag.BoolVar(&flagRunWeb, "web", false, "Set to run webserver")
 	flag.StringVar(&flagRunFeeds, "feeds", "", "Which feeds to run, comma seperated list (currently reddit and youtube)")
-	flag.BoolVar(&flagRunEverything, "all", false, "Set to everything (discord bot, webserver and reddit bot)")
+	flag.BoolVar(&flagRunEverything, "all", false, "Set to everything (discord bot, webserver, backgroundworkers and all feeds)")
 	flag.BoolVar(&flagDryRun, "dry", false, "Do a dryrun, initialize all plugins but don't actually start anything")
 	flag.BoolVar(&flagSysLog, "syslog", false, "Set to log to syslog (only linux)")
 	flag.BoolVar(&flagRunBWC, "backgroundworkers", false, "Run the various background workers, atleast one process needs this")
@@ -85,9 +87,9 @@ func main() {
 	bot.FlagNodeID = flagNodeID
 	common.NodeID = flagNodeID
 
-	log.AddHook(common.ContextHook{})
+	common.AddLogHook(common.ContextHook{})
 
-	log.SetFormatter(&log.TextFormatter{
+	common.SetLogFormatter(&log.TextFormatter{
 		DisableTimestamp: !common.Testing,
 		ForceColors:      common.Testing,
 	})
@@ -104,7 +106,7 @@ func main() {
 		})
 
 		if err == nil {
-			log.AddHook(hook)
+			common.AddLogHook(hook)
 			log.Info("Added Sentry Hook")
 		} else {
 			log.WithError(err).Error("Failed adding sentry hook")
@@ -153,6 +155,8 @@ func main() {
 	youtube.RegisterPlugin()
 	rolecommands.RegisterPlugin()
 	cah.RegisterPlugin()
+	tickets.RegisterPlugin()
+	verification.RegisterPlugin()
 	premium.RegisterPlugin()
 	patreonpremiumsource.RegisterPlugin()
 	scheduledevents2.RegisterPlugin()

@@ -4,10 +4,12 @@ import (
 	"github.com/sirupsen/logrus"
 	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -108,10 +110,16 @@ func (t *LoggingTransport) RoundTrip(request *http.Request) (*http.Response, err
 	go func() {
 		path := numberRemover.Replace(request.URL.Path)
 
-		Statsd.Incr("discord.num_requsts", []string{"method:" + request.Method, "resp_code:" + strconv.Itoa(floored), "path:" + request.Method + "-" + path}, 1)
-		Statsd.Gauge("discord.http_latency", since, nil, 1)
-		if code == 429 {
-			Statsd.Incr("discord.requests.429", []string{"method:" + request.Method, "path:" + request.Method + "-" + path}, 1)
+		if Statsd != nil {
+			Statsd.Incr("discord.num_requsts", []string{"method:" + request.Method, "resp_code:" + strconv.Itoa(floored), "path:" + request.Method + "-" + path}, 1)
+			Statsd.Gauge("discord.http_latency", since, nil, 1)
+			if code == 429 {
+				Statsd.Incr("discord.requests.429", []string{"method:" + request.Method, "path:" + request.Method + "-" + path}, 1)
+			}
+		}
+
+		if since > 1000 {
+			logrus.WithField("path", request.URL.Path).WithField("ms", since).WithField("method", request.Method).Warn("Request took longer than a second to complete!")
 		}
 
 		// Statsd.Incr("discord.response.code."+strconv.Itoa(floored), nil, 1)
@@ -119,4 +127,77 @@ func (t *LoggingTransport) RoundTrip(request *http.Request) (*http.Response, err
 	}()
 
 	return resp, err
+}
+
+type PrefixedLogFormatter struct {
+	Inner  logrus.Formatter
+	Prefix string
+}
+
+func (p *PrefixedLogFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	entryCop := *entry
+	entryCop.Message = p.Prefix + entryCop.Message
+
+	return p.Inner.Format(&entryCop)
+}
+
+// We pretty the logging up a bit here, adding a prefix for plugins
+var loggers = []*logrus.Logger{logrus.StandardLogger()}
+var loggersmu sync.Mutex
+
+func AddLogHook(hook logrus.Hook) {
+	loggersmu.Lock()
+
+	for _, v := range loggers {
+		v.AddHook(hook)
+	}
+
+	loggersmu.Unlock()
+}
+
+func SetLogFormatter(formatter logrus.Formatter) {
+	loggersmu.Lock()
+
+	for _, v := range loggers {
+		if cast, ok := v.Formatter.(*PrefixedLogFormatter); ok {
+			cast.Inner = formatter
+		} else {
+			v.SetFormatter(formatter)
+		}
+	}
+
+	loggersmu.Unlock()
+}
+
+func GetPluginLogger(plugin Plugin) *logrus.Logger {
+	info := plugin.PluginInfo()
+	return GetFixedPrefixLogger(info.SysName)
+}
+
+func GetFixedPrefixLogger(prefix string) *logrus.Logger {
+
+	l := logrus.New()
+	stdLogger := logrus.StandardLogger()
+	cop := make(logrus.LevelHooks)
+	for k, v := range stdLogger.Hooks {
+		cop[k] = make([]logrus.Hook, len(v))
+		copy(cop[k], v)
+	}
+
+	l.Level = logrus.InfoLevel
+	if os.Getenv("YAGPDB_TESTING") != "" || os.Getenv("YAGPDB_DEBUG_LOG") != "" {
+		l.Level = logrus.DebugLevel
+	}
+
+	l.Hooks = cop
+	l.Formatter = &PrefixedLogFormatter{
+		Inner:  stdLogger.Formatter,
+		Prefix: "[" + prefix + "] ",
+	}
+
+	loggersmu.Lock()
+	loggers = append(loggers, l)
+	loggersmu.Unlock()
+
+	return l
 }

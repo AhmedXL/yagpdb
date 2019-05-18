@@ -6,7 +6,6 @@ import (
 	"github.com/jonas747/yagpdb/common"
 	"github.com/jonas747/yagpdb/premium"
 	"github.com/karlseguin/ccache"
-	"github.com/sirupsen/logrus"
 	"strconv"
 	"strings"
 	"unicode"
@@ -16,6 +15,7 @@ import (
 
 var (
 	RegexCache *ccache.Cache
+	logger     = common.GetPluginLogger(&Plugin{})
 )
 
 type Plugin struct {
@@ -32,11 +32,7 @@ func (p *Plugin) PluginInfo() *common.PluginInfo {
 func RegisterPlugin() {
 	RegexCache = ccache.New(ccache.Configure())
 
-	_, err := common.PQ.Exec(DBSchema)
-	if err != nil {
-		logrus.WithError(err).Error("Failed setting up automod postgres tables, plugin will be disabled.")
-		return
-	}
+	common.InitSchema(DBSchema, "automod_v2")
 
 	p := &Plugin{}
 	common.RegisterPlugin(p)
@@ -88,13 +84,15 @@ const (
 	MaxViolationTriggersPremium = 100
 
 	MaxTotalRules        = 25
-	MaxTotalRulesPremium = 100
+	MaxTotalRulesPremium = 150
 
 	MaxLists        = 5
 	MaxListsPremium = 25
 
-	MaxRuleParts = 20
-	MaxRulesets  = 10
+	MaxRuleParts = 25
+
+	MaxRulesets        = 10
+	MaxRulesetsPremium = 25
 )
 
 func GuildMaxMessageTriggers(guildID int64) int {
@@ -127,6 +125,14 @@ func GuildMaxLists(guildID int64) int {
 	}
 
 	return MaxLists
+}
+
+func GuildMaxRulesets(guildID int64) int {
+	if isPremium, _ := premium.IsGuildPremium(guildID); isPremium {
+		return MaxRulesetsPremium
+	}
+
+	return MaxRulesets
 }
 
 func PrepareMessageForWordCheck(input string) string {
