@@ -5,6 +5,12 @@ package scheduledevents2
 import (
 	"context"
 	"encoding/json"
+	"math/rand"
+	"reflect"
+	"runtime/debug"
+	"sync"
+	"time"
+
 	"github.com/jonas747/discordgo"
 	"github.com/jonas747/yagpdb/bot"
 	"github.com/jonas747/yagpdb/common"
@@ -12,11 +18,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/volatiletech/sqlboiler/boil"
 	"github.com/volatiletech/sqlboiler/queries/qm"
-	"math/rand"
-	"reflect"
-	"runtime/debug"
-	"sync"
-	"time"
 )
 
 type ScheduledEvents struct {
@@ -139,6 +140,32 @@ func (se *ScheduledEvents) check() {
 	numHandling := 0
 	for _, p := range toProcess {
 		if !bot.IsGuildOnCurrentProcess(p.GuildID) {
+			numSkipped++
+			continue
+		}
+
+		// make sure the guild is available
+		gs := bot.State.Guild(true, p.GuildID)
+		if gs == nil {
+			onGuild, err := common.BotIsOnGuild(p.GuildID)
+			if err != nil {
+				logger.WithError(err).WithField("guild", p.GuildID).Error("failed checking if bot is on guild")
+			} else if !onGuild {
+				logger.WithField("guild", p.GuildID).Info("completely skipping event from guild not joined")
+				se.markDone(p)
+				continue
+			}
+
+			numSkipped++
+			continue
+		}
+
+		gs.RLock()
+		unavailable := gs.Guild.Unavailable
+		gs.RUnlock()
+
+		if unavailable {
+			// wait until the guild is available before handling this event
 			numSkipped++
 			continue
 		}

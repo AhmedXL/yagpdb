@@ -5,13 +5,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/jinzhu/gorm"
-	"github.com/jonas747/discordgo"
-	"github.com/jonas747/yagpdb/common"
-	"github.com/jonas747/yagpdb/web"
-	"github.com/mediocregopher/radix"
-	"goji.io"
-	"goji.io/pat"
 	"html/template"
 	"io"
 	"io/ioutil"
@@ -19,6 +12,15 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/jinzhu/gorm"
+	"github.com/jonas747/discordgo"
+	"github.com/jonas747/retryableredis"
+	"github.com/jonas747/yagpdb/common"
+	"github.com/jonas747/yagpdb/web"
+	"github.com/mediocregopher/radix"
+	"goji.io"
+	"goji.io/pat"
 )
 
 type CtxKey int
@@ -30,7 +32,7 @@ const (
 type Form struct {
 	YoutubeChannelID   string
 	YoutubeChannelUser string
-	DiscordChannel     int64 `valid:"channel,false`
+	DiscordChannel     int64 `valid:"channel,false"`
 	ID                 uint
 	MentionEveryone    bool
 }
@@ -66,7 +68,7 @@ func (p *Plugin) InitWeb() {
 	ytMux.Handle(pat.Get("/:item/delete"), web.ControllerPostHandler(BaseEditHandler(p.HandleRemove), mainGetHandler, nil, "Removed a youtube feed"))
 
 	// The handler from pubsubhub
-	web.RootMux.Handle(pat.New("/yt_new_upload/"+WebSubVerifyToken), http.HandlerFunc(p.HandleFeedUpdate))
+	web.RootMux.Handle(pat.New("/yt_new_upload/"+confWebsubVerifytoken.GetString()), http.HandlerFunc(p.HandleFeedUpdate))
 }
 
 func (p *Plugin) HandleYoutube(w http.ResponseWriter, r *http.Request) (web.TemplateData, error) {
@@ -177,7 +179,7 @@ func (p *Plugin) HandleFeedUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	switch query.Get("hub.mode") {
 	case "subscribe":
-		if query.Get("hub.verify_token") != WebSubVerifyToken {
+		if query.Get("hub.verify_token") != confWebsubVerifytoken.GetString() {
 			return // We don't want no intruders here
 		}
 
@@ -185,7 +187,7 @@ func (p *Plugin) HandleFeedUpdate(w http.ResponseWriter, r *http.Request) {
 		p.ValidateSubscription(w, r, query)
 		return
 	case "unsubscribe":
-		if query.Get("hub.verify_token") != WebSubVerifyToken {
+		if query.Get("hub.verify_token") != confWebsubVerifytoken.GetString() {
 			return // We don't want no intruders here
 		}
 
@@ -197,7 +199,7 @@ func (p *Plugin) HandleFeedUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		common.RedisPool.Do(radix.Cmd(nil, "ZREM", RedisKeyWebSubChannels, topicURI.Query().Get("channel_id")))
+		common.RedisPool.Do(retryableredis.Cmd(nil, "ZREM", RedisKeyWebSubChannels, topicURI.Query().Get("channel_id")))
 		return
 	}
 
@@ -227,13 +229,13 @@ func (p *Plugin) HandleFeedUpdate(w http.ResponseWriter, r *http.Request) {
 	defer common.UnlockRedisKey(RedisChannelsLockKey)
 
 	var mn radix.MaybeNil
-	common.RedisPool.Do(radix.Cmd(&mn, "ZSCORE", "youtube_subbed_channels", parsed.ChannelID))
+	common.RedisPool.Do(retryableredis.Cmd(&mn, "ZSCORE", "youtube_subbed_channels", parsed.ChannelID))
 	if mn.Nil {
 		return
 	}
 
 	// Reset the score to be instantly scanned
-	common.RedisPool.Do(radix.Cmd(nil, "ZADD", "youtube_subbed_channels", "0", parsed.ChannelID))
+	common.RedisPool.Do(retryableredis.Cmd(nil, "ZADD", "youtube_subbed_channels", "0", parsed.ChannelID))
 }
 
 func (p *Plugin) ValidateSubscription(w http.ResponseWriter, r *http.Request, query url.Values) {
@@ -255,7 +257,7 @@ func (p *Plugin) ValidateSubscription(w http.ResponseWriter, r *http.Request, qu
 			return
 		}
 
-		common.RedisPool.Do(radix.FlatCmd(nil, "ZADD", RedisKeyWebSubChannels, expires, topicURI.Query().Get("channel_id")))
+		common.RedisPool.Do(retryableredis.FlatCmd(nil, "ZADD", RedisKeyWebSubChannels, expires, topicURI.Query().Get("channel_id")))
 	}
 }
 

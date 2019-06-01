@@ -1,17 +1,18 @@
 package automod
 
 import (
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+	"unicode"
+
 	"github.com/jonas747/discordgo"
 	"github.com/jonas747/dstate"
 	"github.com/jonas747/yagpdb/automod/models"
 	"github.com/jonas747/yagpdb/automod_legacy"
 	"github.com/jonas747/yagpdb/common"
 	"github.com/jonas747/yagpdb/safebrowsing"
-	"net/url"
-	"regexp"
-	"strings"
-	"time"
-	"unicode"
 )
 
 var forwardSlashReplacer = strings.NewReplacer("\\", "")
@@ -19,7 +20,7 @@ var forwardSlashReplacer = strings.NewReplacer("\\", "")
 /////////////////////////////////////////////////////////////
 
 type BaseRegexTriggerData struct {
-	Regex string `valid:",1,250`
+	Regex string `valid:",1,250"`
 }
 
 type BaseRegexTrigger struct {

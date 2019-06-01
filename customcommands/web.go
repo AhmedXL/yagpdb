@@ -3,6 +3,11 @@ package customcommands
 import (
 	"context"
 	"fmt"
+	"html/template"
+	"net/http"
+	"strconv"
+	"unicode/utf8"
+
 	"github.com/jonas747/yagpdb/common"
 	"github.com/jonas747/yagpdb/common/pubsub"
 	"github.com/jonas747/yagpdb/customcommands/models"
@@ -12,11 +17,6 @@ import (
 	"github.com/volatiletech/sqlboiler/queries/qm"
 	"goji.io"
 	"goji.io/pat"
-	"html/template"
-	"net/http"
-	"os"
-	"strconv"
-	"unicode/utf8"
 )
 
 type GroupForm struct {
@@ -30,10 +30,6 @@ type GroupForm struct {
 }
 
 func (p *Plugin) InitWeb() {
-	if os.Getenv("YAGPDB_CC_DISABLE_REDIS_PQ_MIGRATION") == "" {
-		go migrateFromRedis()
-	}
-
 	tmplPathSettings := "templates/plugins/customcommands.html"
 	if common.Testing {
 		tmplPathSettings = "../../customcommands/assets/customcommands.html"

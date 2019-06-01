@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
+
 	"github.com/jonas747/dcmd"
 	"github.com/jonas747/discordgo"
 	"github.com/jonas747/dstate"
@@ -14,7 +16,6 @@ import (
 	"github.com/jonas747/yagpdb/logs/models"
 	"github.com/volatiletech/null"
 	"github.com/volatiletech/sqlboiler/boil"
-	"time"
 )
 
 var (
@@ -30,11 +31,11 @@ func (p *Plugin) AddCommands() {
 }
 
 func (p *Plugin) BotInit() {
-	eventsystem.AddHandler(bot.ConcurrentEventHandler(HandleQueueEvt), eventsystem.EventGuildMemberUpdate, eventsystem.EventGuildMemberAdd, eventsystem.EventMemberFetched)
-	eventsystem.AddHandler(bot.ConcurrentEventHandler(HandleGC), eventsystem.EventGuildCreate)
-	eventsystem.AddHandler(bot.ConcurrentEventHandler(HandleMsgDelete), eventsystem.EventMessageDelete, eventsystem.EventMessageDeleteBulk)
+	eventsystem.AddHandlerAsyncLast(bot.ConcurrentEventHandler(HandleQueueEvt), eventsystem.EventGuildMemberUpdate, eventsystem.EventGuildMemberAdd, eventsystem.EventMemberFetched)
+	eventsystem.AddHandlerAsyncLast(bot.ConcurrentEventHandler(HandleGC), eventsystem.EventGuildCreate)
+	eventsystem.AddHandlerAsyncLast(bot.ConcurrentEventHandler(HandleMsgDelete), eventsystem.EventMessageDelete, eventsystem.EventMessageDeleteBulk)
 
-	eventsystem.AddHandlerBefore(HandlePresenceUpdate, eventsystem.EventPresenceUpdate, bot.StateHandlerPtr)
+	eventsystem.AddHandlerFirst(HandlePresenceUpdate, eventsystem.EventPresenceUpdate)
 
 	var err error
 	nicknameQueryStatement, err = common.PQ.Prepare("select nickname from nickname_listings where user_id=$1 AND guild_id=$2 order by id desc limit 1;")
@@ -568,13 +569,22 @@ func EvtProcesser() {
 	for {
 		e := <-evtChan
 
+		guildIDProvider, ok := e.(discordgo.GuildEvent)
+		if !ok {
+			logger.Error("Not a guildID provider: ", e)
+			return
+		}
+
+		gID := guildIDProvider.GetGuildID()
+
+		conf, err := GetConfigCached(gID)
+		if err != nil {
+			logger.WithError(err).WithField("guild", gID).Error("Failed fetching config")
+			continue
+		}
+
 		switch t := e.(type) {
 		case *discordgo.PresenceUpdate:
-			conf, err := GetConfig(context.Background(), t.GuildID)
-			if err != nil {
-				logger.WithError(err).Error("Failed fetching config")
-				continue
-			}
 
 			if conf.NicknameLoggingEnabled.Bool {
 				CheckNickname(common.PQ, context.Background(), nicknameQueryStatement, t.User.ID, t.GuildID, t.Presence.Nick)
@@ -586,29 +596,16 @@ func EvtProcesser() {
 				}
 			}
 		case *discordgo.GuildMemberUpdate:
-			conf, err := GetConfig(context.Background(), t.GuildID)
-			if err != nil {
-				logger.WithError(err).Error("Failed fetching config")
-				continue
-			}
+
 			if conf.NicknameLoggingEnabled.Bool {
 				CheckNickname(common.PQ, context.Background(), nicknameQueryStatement, t.User.ID, t.GuildID, t.Nick)
 			}
 		case *discordgo.GuildMemberAdd:
-			conf, err := GetConfig(context.Background(), t.GuildID)
-			if err != nil {
-				logger.WithError(err).Error("Failed fetching config")
-				continue
-			}
+
 			if conf.UsernameLoggingEnabled.Bool {
 				CheckUsername(common.PQ, context.Background(), usernameQueryStatement, t.User)
 			}
 		case *discordgo.Member:
-			conf, err := GetConfig(context.Background(), t.GuildID)
-			if err != nil {
-				logger.WithError(err).Error("Failed fetching config")
-				continue
-			}
 
 			if conf.NicknameLoggingEnabled.Bool {
 				CheckNickname(common.PQ, context.Background(), nicknameQueryStatement, t.User.ID, t.GuildID, t.Nick)
@@ -667,4 +664,24 @@ func EvtProcesserGCs() {
 		// 	time.Sleep(time.Second * 15)
 		// }
 	}
+}
+
+const CacheKeyConfig bot.GSCacheKey = "logs_config"
+
+func GetConfigCached(gID int64) (*models.GuildLoggingConfig, error) {
+	gs := bot.State.Guild(true, gID)
+	if gs == nil {
+		return nil, bot.ErrGuildNotFound
+	}
+
+	v, err := gs.UserCacheFetch(true, CacheKeyConfig, func() (interface{}, error) {
+		conf, err := GetConfig(context.Background(), gID)
+		return conf, err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return v.(*models.GuildLoggingConfig), nil
 }

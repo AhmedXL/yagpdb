@@ -2,10 +2,6 @@ package main
 
 import (
 	"flag"
-	"github.com/evalphobia/logrus_sentry"
-	"github.com/jonas747/yagpdb/automod"
-	"github.com/jonas747/yagpdb/safebrowsing"
-	log "github.com/sirupsen/logrus"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,11 +9,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/evalphobia/logrus_sentry"
+	"github.com/jonas747/yagpdb/automod"
+	"github.com/jonas747/yagpdb/safebrowsing"
+	log "github.com/sirupsen/logrus"
+
 	// Core yagpdb packages
 	"github.com/jonas747/yagpdb/bot"
 	"github.com/jonas747/yagpdb/bot/botrest"
+	"github.com/jonas747/yagpdb/bot/paginatedmessages"
 	"github.com/jonas747/yagpdb/common"
 	"github.com/jonas747/yagpdb/common/backgroundworkers"
+	"github.com/jonas747/yagpdb/common/config"
 	"github.com/jonas747/yagpdb/common/configstore"
 	"github.com/jonas747/yagpdb/common/mqueue"
 	"github.com/jonas747/yagpdb/common/pubsub"
@@ -42,13 +45,17 @@ import (
 	"github.com/jonas747/yagpdb/reminders"
 	"github.com/jonas747/yagpdb/reputation"
 	"github.com/jonas747/yagpdb/rolecommands"
+	"github.com/jonas747/yagpdb/rsvp"
 	"github.com/jonas747/yagpdb/serverstats"
 	"github.com/jonas747/yagpdb/soundboard"
 	"github.com/jonas747/yagpdb/stdcommands"
 	"github.com/jonas747/yagpdb/streaming"
 	"github.com/jonas747/yagpdb/tickets"
+	"github.com/jonas747/yagpdb/timezonecompanion"
+	"github.com/jonas747/yagpdb/twitter"
 	"github.com/jonas747/yagpdb/verification"
 	"github.com/jonas747/yagpdb/youtube"
+	// External plugins
 )
 
 var (
@@ -66,6 +73,8 @@ var (
 
 	flagNodeID string
 )
+
+var confSentryDSN = config.RegisterOption("yagpdb.sentry_dsn", "Sentry credentials for sentry logging hook", nil)
 
 func init() {
 	flag.BoolVar(&flagRunBot, "bot", false, "Set to run discord bot and bot related stuff")
@@ -98,8 +107,9 @@ func main() {
 		AddSyslogHooks()
 	}
 
-	if os.Getenv("YAGPDB_SENTRY_DSN") != "" {
-		hook, err := logrus_sentry.NewSentryHook(os.Getenv("YAGPDB_SENTRY_DSN"), []log.Level{
+	config.Load()
+	if confSentryDSN.GetString() != "" {
+		hook, err := logrus_sentry.NewSentryHook(confSentryDSN.GetString(), []log.Level{
 			log.PanicLevel,
 			log.FatalLevel,
 			log.ErrorLevel,
@@ -132,6 +142,7 @@ func main() {
 	configstore.InitDatabases()
 
 	//BotSession.LogLevel = discordgo.LogInformational
+	paginatedmessages.RegisterPlugin()
 
 	// Setup plugins
 	safebrowsing.RegisterPlugin()
@@ -160,6 +171,9 @@ func main() {
 	premium.RegisterPlugin()
 	patreonpremiumsource.RegisterPlugin()
 	scheduledevents2.RegisterPlugin()
+	twitter.RegisterPlugin()
+	rsvp.RegisterPlugin()
+	timezonecompanion.RegisterPlugin()
 
 	if flagDryRun {
 		log.Println("This is a dry run, exiting")

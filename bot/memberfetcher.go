@@ -2,13 +2,14 @@ package bot
 
 import (
 	"errors"
+	"sync"
+	"time"
+
 	"github.com/jonas747/discordgo"
 	"github.com/jonas747/dstate"
 	"github.com/jonas747/yagpdb/bot/eventsystem"
 	"github.com/jonas747/yagpdb/common"
 	"github.com/karlseguin/ccache"
-	"sync"
-	"time"
 )
 
 var (
@@ -223,10 +224,8 @@ func (m *memberFetcher) next(guildID int64) (more bool) {
 				failedUsersCache.Set(failedCacheKey, 1, time.Hour)
 			}
 		} else {
-			go eventsystem.EmitEvent(&eventsystem.EventData{
-				EvtInterface: &discordgo.GuildMemberAdd{Member: member},
-				Type:         eventsystem.EventMemberFetched,
-			}, eventsystem.EventMemberFetched)
+			member.GuildID = guildID
+			go eventsystem.EmitEvent(eventsystem.NewEventData(nil, eventsystem.EventMemberFetched, &discordgo.GuildMemberAdd{Member: member}), eventsystem.EventMemberFetched)
 
 			if gs := State.Guild(true, guildID); gs != nil {
 				gs.MemberAddUpdate(true, member)

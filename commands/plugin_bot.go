@@ -3,17 +3,18 @@ package commands
 import (
 	"context"
 	"fmt"
-	"github.com/jonas747/dcmd"
-	"github.com/jonas747/discordgo"
-	"github.com/jonas747/dstate"
-	"github.com/jonas747/yagpdb/bot"
-	"github.com/jonas747/yagpdb/bot/eventsystem"
-	"github.com/jonas747/yagpdb/common"
-	"github.com/mediocregopher/radix"
-	"github.com/pkg/errors"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jonas747/dcmd"
+	"github.com/jonas747/discordgo"
+	"github.com/jonas747/dstate"
+	"github.com/jonas747/retryableredis"
+	"github.com/jonas747/yagpdb/bot"
+	"github.com/jonas747/yagpdb/bot/eventsystem"
+	"github.com/jonas747/yagpdb/common"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -24,8 +25,8 @@ var _ bot.BotInitHandler = (*Plugin)(nil)
 var _ bot.BotStopperHandler = (*Plugin)(nil)
 
 func (p *Plugin) BotInit() {
-	eventsystem.AddHandler(HandleGuildCreate, eventsystem.EventGuildCreate)
-	eventsystem.AddHandler(handleMsgCreate, eventsystem.EventMessageCreate)
+	eventsystem.AddHandlerAsyncLast(HandleGuildCreate, eventsystem.EventGuildCreate)
+	eventsystem.AddHandlerAsyncLast(handleMsgCreate, eventsystem.EventMessageCreate)
 
 	CommandSystem.State = bot.State
 }
@@ -161,6 +162,11 @@ func AddRootCommands(cmds ...*YAGCommand) {
 		CommandSystem.Root.AddCommand(v, v.GetTrigger())
 	}
 }
+func AddRootCommandsWithMiddlewares(middlewares []dcmd.MiddleWareFunc, cmds ...*YAGCommand) {
+	for _, v := range cmds {
+		CommandSystem.Root.AddCommand(v, v.GetTrigger().SetMiddlewares(middlewares...))
+	}
+}
 
 func handleMsgCreate(evt *eventsystem.EventData) {
 	m := evt.MessageCreate()
@@ -248,7 +254,7 @@ func HandleGuildCreate(evt *eventsystem.EventData) {
 	g := evt.GuildCreate()
 
 	var prefixExists bool
-	err := common.RedisPool.Do(radix.Cmd(&prefixExists, "EXISTS", "command_prefix:"+discordgo.StrID(g.ID)))
+	err := common.RedisPool.Do(retryableredis.Cmd(&prefixExists, "EXISTS", "command_prefix:"+discordgo.StrID(g.ID)))
 	if err != nil {
 		logger.WithError(err).Error("Failed checking if prefix exists")
 		return
@@ -260,7 +266,7 @@ func HandleGuildCreate(evt *eventsystem.EventData) {
 			defaultPrefix = "("
 		}
 
-		common.RedisPool.Do(radix.Cmd(nil, "SET", "command_prefix:"+discordgo.StrID(g.ID), defaultPrefix))
+		common.RedisPool.Do(retryableredis.Cmd(nil, "SET", "command_prefix:"+discordgo.StrID(g.ID), defaultPrefix))
 		logger.WithField("guild", g.ID).WithField("g_name", g.Name).Info("Set command prefix to default (" + defaultPrefix + ")")
 	}
 }

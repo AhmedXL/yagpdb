@@ -2,16 +2,17 @@ package commands
 
 import (
 	"fmt"
-	"github.com/jonas747/dcmd"
-	"github.com/jonas747/discordgo"
-	"github.com/jonas747/yagpdb/bot"
-	"github.com/jonas747/yagpdb/common"
-	"github.com/pkg/errors"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/jonas747/dcmd"
+	"github.com/jonas747/discordgo"
+	"github.com/jonas747/yagpdb/bot"
+	"github.com/jonas747/yagpdb/common"
+	"github.com/pkg/errors"
 )
 
 type DurationArg struct {
@@ -185,7 +186,10 @@ func CommonContainerNotFoundHandler(container *dcmd.Container, fixedMessage stri
 			cParentID := data.CS.ParentID
 			data.GS.RUnlock()
 
-			ms := ContextMS(data.Context())
+			ms, err := bot.GetMember(data.GS.ID, data.Msg.Author.ID)
+			if err != nil {
+				return nil, nil
+			}
 
 			channelOverrides, err := GetOverridesForChannel(data.CS.ID, cParentID, data.GS.ID)
 			if err != nil {
